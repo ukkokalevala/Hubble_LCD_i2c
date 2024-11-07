@@ -1,0 +1,116 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>  // For HTTPS
+#include "secrets.h"
+
+// WiFi credentials
+//const char* ssid = "YOUR_SSID";
+//const char* password = "YOUR_PASSWORD";
+
+// N2YO API URL as a const char*
+const char* n2yoUrl = "https://api.n2yo.com/rest/v1/satellite/positions/20580/-34.136002/18.430000/0/1/&apiKey=NH74CL-F9XL2D-EU42SJ-5CZB";
+
+// Your position (Cape Town)
+const float userLatitude = -34.136002;
+const float userLongitude = 18.430000;
+
+// LCD setup (set your I2C address here)
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+WiFiClientSecure client;  // For secure HTTP connections
+
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(D2, D1);
+  lcd.begin(16, 02);  // Initialize LCD
+  lcd.backlight();
+  
+  lcd.setCursor(0, 0);
+  lcd.print("Connecting...");
+  delay(1000);
+  
+  lcd.setCursor(0, 1);
+  lcd.print("To Hubble ");
+  delay(2000);
+  
+   // Allow insecure SSL (for testing)
+  client.setInsecure();
+
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  lcd.clear();
+  lcd.print("Connected!");
+  delay(1000);
+  lcd.clear();
+}
+
+void loop() {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(client, n2yoUrl);  // Secure client for HTTPS
+    http.addHeader("Content-Type", "application/json");  // Adding headers
+
+    int httpResponseCode = http.GET();
+    if (httpResponseCode == 200) {
+      String payload = http.getString();
+      Serial.println(payload);
+
+      // Extract latitude and longitude
+      int latIndex = payload.indexOf("\"satlatitude\":") + 14;
+      int longIndex = payload.indexOf("\"satlongitude\":") + 15;
+      float satLatitude = payload.substring(latIndex, payload.indexOf(",", latIndex)).toFloat();
+      float satLongitude = payload.substring(longIndex, payload.indexOf(",", longIndex)).toFloat();
+
+      // Calculate the distance
+      float distance = calculateDistance(userLatitude, userLongitude, satLatitude, satLongitude);
+
+      // Display on LCD
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Lat: ");
+      lcd.print(satLatitude, 2);
+      lcd.setCursor(0, 1);
+      lcd.print("Lon: ");
+      lcd.print(satLongitude, 2);
+      delay(4000);
+
+      lcd.clear();
+      lcd.setCursor(0, 0);
+      lcd.print("Dist: ");
+      lcd.print(distance, 1);
+      lcd.setCursor(0, 1);
+      lcd.print("km to Hubble ");
+
+      delay(5000);  // Refresh every 5 seconds
+    } else {
+      lcd.clear();
+      lcd.print("Error code:");
+      lcd.setCursor(0, 1);
+      lcd.print(httpResponseCode);
+      delay(2000);
+    }
+    http.end();
+  } else {
+    lcd.clear();
+    lcd.print("WiFi lost...");
+    WiFi.reconnect();
+    delay(5000);
+  }
+}
+
+// Function to calculate the distance between two latitude/longitude points
+float calculateDistance(float lat1, float lon1, float lat2, float lon2) {
+  const float R = 6371.0;  // Radius of Earth in kilometers
+  float dLat = radians(lat2 - lat1);
+  float dLon = radians(lon2 - lon1);
+  float a = sin(dLat / 2) * sin(dLat / 2) +
+            cos(radians(lat1)) * cos(radians(lat2)) *
+            sin(dLon / 2) * sin(dLon / 2);
+  float c = 2 * atan2(sqrt(a), sqrt(1 - a));
+  return R * c;  // Distance in kilometers
+}
